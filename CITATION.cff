@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+title: Executive Reporting Rollup
+message: >-
+  If you use this workflow or its documented n8n findings in your
+  own work, please cite it.
+type: software
+authors:
+  - family-names: Orilla
+    given-names: Leonielhou
+    alias: itsleonforshort
+repository-code: "https://github.com/itsleonforshort/executive-reporting-rollup"
+abstract: >-
+  An n8n workflow that replaces a weekly leadership deck built by
+  hand. It reads five data sources, classifies each as read, empty
+  or unreachable, calculates variance against target and
+  week-over-week change, has an AI model write a short narrative,
+  builds a Google Doc with two charts, exports a PDF, requires a
+  human approval by Telegram before anything is sent, then emails
+  leadership and records the week. Ships with the full build
+  record, including a knowledge base of n8n behaviours proven by
+  execution rather than taken from documentation.
+keywords:
+  - n8n
+  - workflow-automation
+  - ai-agents
+  - business-intelligence
+  - reporting
+  - human-in-the-loop
+license: MIT
