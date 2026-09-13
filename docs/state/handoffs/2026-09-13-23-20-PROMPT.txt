@@ -1,0 +1,16 @@
+Read CLAUDE.md in full, then docs/state/handoffs/2026-09-13-23-20.md in full. That handoff
+supersedes every older handoff and docs/state/project-state.md section 0 — do not read the
+older ones.
+
+Then verify the live state yourself before doing anything. Pull n8n workflow iIypy4KWtaqsowAQ
+from https://<your-n8n-instance> and confirm by hand that the Coder's rework landed:
+the approval path on "IF - Was The Brief Approved?" and on "Telegram - Alert Brief Not Sent",
+the .item references inside the "Code - Build Brief HTML And Chart URLs" node body, and
+alwaysOutputData on all five fetch nodes.
+
+Then run the qa agent again against the 34 acceptance criteria in docs/reports/qa-v1.md, writing
+to docs/reports/qa-v2.md. Tell it criterion 4 is amended and MAJOR 1 is withdrawn — the
+correction is at the end of qa-v1.md.
+
+Keep node 11 disabled. Do not activate or run the workflow. Do not start the Tester until Leo
+has created a Telegram credential.

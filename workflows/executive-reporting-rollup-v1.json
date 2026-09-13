@@ -1,0 +1,541 @@
+{
+  "id": "iIypy4KWtaqsowAQ",
+  "name": "Executive Reporting Rollup - Weekly Leadership Brief",
+  "active": false,
+  "nodes": [
+    {
+      "id": "n1",
+      "name": "Schedule Trigger - Weekly Monday 7am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [0, 0],
+      "parameters": {
+        "rule": { "interval": [ { "field": "weeks", "weeksInterval": 1, "triggerAtDay": [1], "triggerAtHour": 7, "triggerAtMinute": 0 } ] },
+        "misfirePolicy": "skip"
+      }
+    },
+    {
+      "id": "n2",
+      "name": "Set - Define Reporting Week",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [224, 0],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "1", "name": "timezone", "type": "string", "value": "Europe/London" },
+            { "id": "2", "name": "weekStart", "type": "string", "value": "={{ $now.setZone('Europe/London').minus({ weeks: 1 }).startOf('week').toISO() }}" },
+            { "id": "3", "name": "weekEnd", "type": "string", "value": "={{ $now.setZone('Europe/London').startOf('week').toISO() }}" },
+            { "id": "4", "name": "weekLabel", "type": "string", "value": "={{ $now.setZone('Europe/London').minus({ weeks: 1 }).toFormat(\"kkkk-'W'WW\") }}" },
+            { "id": "5", "name": "runId", "type": "string", "value": "={{ $now.setZone('Europe/London').minus({ weeks: 1 }).toFormat(\"kkkk-'W'WW\") }}" },
+            { "id": "6", "name": "triggeredAt", "type": "string", "value": "={{ $now.setZone('Europe/London').toISO() }}" }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Single place the week boundary and run timestamp are decided (architecture v1 section 5). Added a 6th field, triggeredAt, beyond the architecture's stated 5 fields, so node 20's run_at column has a real timestamp without any node outside this one calling $now. runId duplicates the weekLabel formula rather than referencing the sibling field within the same node, because n8n Set-node assignments cannot reliably read a sibling assignment set moments earlier in the same node call. QA v1 ruling: the $now-count rule is about place, not count -- accepted, no change needed there. MAINTENANCE (QA v1 MINOR 3): 'Europe/London' is hardcoded in FIVE places in this node -- the timezone field itself, plus inside all four $now expressions (weekStart, weekEnd, weekLabel, runId) -- because a Set node cannot make those four expressions read the timezone field beside them. PRD §12 item 9 (time zone) is still OPEN. When it closes, all five must be edited together: search this node's assignments for the literal string 'Europe/London' and change every occurrence, or the node will compute the week boundary against two different time zones at once."
+    },
+    {
+      "id": "n3",
+      "name": "HubSpot - Fetch Deals And Pipeline",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2.2,
+      "position": [464, -304],
+      "parameters": {
+        "authentication": "appToken",
+        "resource": "deal",
+        "operation": "search",
+        "returnAll": true,
+        "filterGroupsUi": {
+          "filterGroupsValues": [
+            {
+              "filtersUi": {
+                "filterValues": [
+                  { "propertyName": "hs_lastmodifieddate", "type": "number", "operator": "GTE", "value": "={{ Date.parse($('Set - Define Reporting Week').item.json.weekStart) }}" },
+                  { "propertyName": "hs_lastmodifieddate", "type": "number", "operator": "LT", "value": "={{ Date.parse($('Set - Define Reporting Week').item.json.weekEnd) }}" }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "properties": ["dealname", "amount", "dealstage", "pipeline", "closedate", "hs_lastmodifieddate"]
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput",
+      "credentials": { "hubspotAppToken": { "id": "ZhEi0614V5vjYKFJ", "name": "HubSpot Service Key account" } },
+      "notes": "PRD §12 item 4 (which pipeline / which stages count as pipeline) is OPEN and PARKED by Leo. The hs_lastmodifieddate GTE/LT week-bounds filter is a functional placeholder so the node is fully shaped, not the final business filter -- revisit once HubSpot is connected and item 4 is answered. additionalFields.properties is set explicitly to avoid the bare-Deal-ID trap (Integrator report, blocking item 7). authentication is set to 'appToken' (HubSpot Private App / Service Key) because HubSpot has deprecated plain API keys; Leo should create that credential type, not an API Key one. No credential attached -- none exists on this instance yet. RULING v1 (2026-09-14): onError changed from continueRegularOutput to continueErrorOutput so node 9 can ask n8n's router which output this node's items landed on, instead of guessing from item shape."
+    },
+    {
+      "id": "n4",
+      "name": "Supabase - Fetch Product Usage",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [464, -144],
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "SET_ME_supabase_table_name",
+        "returnAll": true,
+        "orderBy": "SET_ME_supabase_date_column",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            { "keyName": "SET_ME_supabase_date_column", "condition": "gte", "keyValue": "={{ $('Set - Define Reporting Week').item.json.weekStart }}" },
+            { "keyName": "SET_ME_supabase_date_column", "condition": "lt", "keyValue": "={{ $('Set - Define Reporting Week').item.json.weekEnd }}" }
+          ]
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput",
+      "credentials": { "supabaseApi": { "id": "34bKthNT33Ghzp2t", "name": "Supabase account - <supabase-account>" } },
+      "notes": "PRD §12 item 3 (Supabase project / table / usage fields) is OPEN and PARKED by Leo. tableId, the date column name and orderBy are SET_ME placeholders -- there is no live credential to pick real values from. returnAll is set to true deliberately (Integrator flagged the node's limit default of 50 as a silent-truncation trap). No credential attached. Must be reconfigured once Supabase is connected and item 3 is answered. RULING v1 (2026-09-14): onError changed from continueRegularOutput to continueErrorOutput -- this is the node that started the ruling: a dead Supabase and an empty Google Sheet both emit { json: {} } on the main output, byte for byte, so item shape alone can never tell them apart."
+    },
+    {
+      "id": "n5",
+      "name": "Google Sheets - Fetch Finance Actuals",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [464, 0],
+      "parameters": {
+        "documentId": { "__rl": true, "mode": "list", "value": "1MJg-FLrykkAAtSDLdCLCuChgVDxI7db9K0pJAetQyhE", "cachedResultName": "Exec Rollup - Finance Actuals", "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MJg-FLrykkAAtSDLdCLCuChgVDxI7db9K0pJAetQyhE/edit?usp=drivesdk" },
+        "sheetName": { "__rl": true, "mode": "list", "value": 2085318769, "cachedResultName": "Untitled", "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1MJg-FLrykkAAtSDLdCLCuChgVDxI7db9K0pJAetQyhE/edit#gid=2085318769" },
+        "options": { "dataLocationOnSheet": { "values": { "rangeDefinition": "detectAutomatically" } } },
+        "resource": "sheet",
+        "operation": "read"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "alwaysOutputData": true,
+      "credentials": { "googleSheetsOAuth2Api": { "id": "iFXqcyvwh4DYkt3s", "name": "Google Sheets account" } },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "n6",
+      "name": "Google Sheets - Fetch Support Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [464, 160],
+      "parameters": {
+        "documentId": { "__rl": true, "mode": "list", "value": "13w0EhJU5taXmmtJ0CUXIqN8P8nfQC489oyXaTsf0MHk", "cachedResultName": "Exec Rollup - Support Log", "cachedResultUrl": "https://docs.google.com/spreadsheets/d/13w0EhJU5taXmmtJ0CUXIqN8P8nfQC489oyXaTsf0MHk/edit?usp=drivesdk" },
+        "sheetName": { "__rl": true, "mode": "list", "value": 1845818240, "cachedResultName": "Untitled", "cachedResultUrl": "https://docs.google.com/spreadsheets/d/13w0EhJU5taXmmtJ0CUXIqN8P8nfQC489oyXaTsf0MHk/edit#gid=1845818240" },
+        "options": { "dataLocationOnSheet": { "values": { "rangeDefinition": "detectAutomatically" } } },
+        "resource": "sheet",
+        "operation": "read"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "alwaysOutputData": true,
+      "credentials": { "googleSheetsOAuth2Api": { "id": "iFXqcyvwh4DYkt3s", "name": "Google Sheets account" } },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "n7",
+      "name": "Google Sheets - Fetch Last Week Snapshot",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [464, 304],
+      "parameters": {
+        "documentId": { "__rl": true, "mode": "list", "value": "1TdTEZ1Jh-4Ne62LmwFfza25pYSttembIuji1o--VElA", "cachedResultName": "Exec Rollup - Weekly Snapshot", "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TdTEZ1Jh-4Ne62LmwFfza25pYSttembIuji1o--VElA/edit?usp=drivesdk" },
+        "sheetName": { "__rl": true, "mode": "list", "value": 1425370562, "cachedResultName": "Untitled", "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TdTEZ1Jh-4Ne62LmwFfza25pYSttembIuji1o--VElA/edit#gid=1425370562" },
+        "options": { "dataLocationOnSheet": { "values": { "rangeDefinition": "detectAutomatically" } } },
+        "resource": "sheet",
+        "operation": "read"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "alwaysOutputData": true,
+      "credentials": { "googleSheetsOAuth2Api": { "id": "iFXqcyvwh4DYkt3s", "name": "Google Sheets account" } },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "n8",
+      "name": "Merge - Wait For All Five Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [704, 0],
+      "parameters": { "mode": "chooseBranch", "numberInputs": 5, "output": "empty", "chooseBranchMode": "waitForAll" },
+      "notes": "Five inputs, indexes 0-4, one per fetch node (HubSpot 0, Supabase 1, Finance 2, Support 3, Snapshot 4). Each input is fed by both outputs of its fetch node -- the main output and the error output both land on the same index -- so every input gets at least one item whether that source succeeds or fails (ruling: docs/architecture/v1-source-classification-ruling.md section 4.2). Verified twice on real data, executions 536 and 537: the Merge fired and node 9 emitted exactly one item. What is still unverified: whether chooseBranch/waitForAll waits on inputs or on individual connections. On every run exactly one of the two connections into each input stays silent, and if waitForAll counts connections rather than inputs the Merge could stall here with no error and no alert (QA v3 NEW-5) -- needs a live test before being trusted."
+    },
+    {
+      "id": "n9",
+      "name": "Code - Normalise And Calculate Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [928, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Runs once for all items. The Merge node upstream emits a single empty item, so every\n// real value here is pulled by name from node 2 and the five fetch nodes.\n//\n// v1 source-classification ruling (docs/architecture/v1-source-classification-ruling.md):\n// nodes 3-7 now use onError: continueErrorOutput, and each node's error output (index 1)\n// feeds the same Merge input its main output (index 0) already used. classify() below asks\n// n8n's own router which output an item landed on, instead of guessing from item shape --\n// item shape cannot tell a dead Supabase apart from an empty Google Sheet: both emit\n// { json: {} }.\n//\n// Fail-closed departure from the ruling as written, on explicit instruction: whether\n// $(node).all(1, 0) behaves as documented has never been measured on this instance (ruling\n// section 5, item 1). The ruling says a throw while reading the error branch is not proof of\n// failure on its own. Here it is: if that read throws, or hands back something that is not a\n// list, the source is marked failed immediately, before the main branch is even read. A\n// source wrongly called failed only produces a visible warning; a source wrongly called\n// healthy produces a false brief, and that is the fault this whole ruling exists to fix.\n\nfunction toNum(v) {\n  if (v === '' || v === undefined || v === null) return null;\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n}\n\nfunction previousWeekLabel(label) {\n  const m = /^(\\d{4})-W(\\d{2})$/.exec(String(label || ''));\n  if (!m) return null;\n  const dt = DateTime.fromObject({ weekYear: Number(m[1]), weekNumber: Number(m[2]), weekday: 1 });\n  if (!dt.isValid) return null;\n  return dt.minus({ weeks: 1 }).toFormat(\"kkkk-'W'WW\");\n}\n\n// The note text for an item that carries an `error` key: its message, or the error itself\n// stringified, or a flat fallback -- always truncated to 300 characters.\nfunction errorNote(item) {\n  const j = (item && item.json) || {};\n  let msg;\n  if (j.error && typeof j.error === 'object' && j.error.message) msg = String(j.error.message);\n  else if (typeof j.error !== 'undefined') msg = String(j.error);\n  else msg = 'The node reported an error.';\n  return msg.slice(0, 300);\n}\n\nfunction classify(nodeName) {\n  const diagnostics = {\n    mainItemCount: 0,\n    blankItemCount: 0,\n    errorBranchCount: 0,\n    errorBranchThrew: false,\n    errorBranchMessage: '',\n  };\n\n  // 1. The error output. branchIndex is always passed explicitly: after this ruling, two\n  //    outputs of this node feed the same Merge input, so the branch n8n would infer by\n  //    default is meaningless here.\n  let errorItems;\n  try {\n    errorItems = $(nodeName).all(1, 0);\n  } catch (e) {\n    diagnostics.errorBranchThrew = true;\n    diagnostics.errorBranchMessage = String((e && e.message) || e).slice(0, 300);\n    return {\n      state: 'failed', ok: false, rowCount: 0, rows: [], diagnostics,\n      note: ('Could not read the error output of \"' + nodeName + '\": ' + diagnostics.errorBranchMessage +\n        '. Treated as failed -- fail-closed, see docs/architecture/v1-source-classification-ruling.md.').slice(0, 300),\n    };\n  }\n  if (!Array.isArray(errorItems)) {\n    diagnostics.errorBranchThrew = true;\n    diagnostics.errorBranchMessage = 'Error output of \"' + nodeName + '\" did not return a list.';\n    return {\n      state: 'failed', ok: false, rowCount: 0, rows: [], diagnostics,\n      note: (diagnostics.errorBranchMessage + ' Treated as failed -- fail-closed.').slice(0, 300),\n    };\n  }\n  diagnostics.errorBranchCount = errorItems.length;\n  if (errorItems.length >= 1) {\n    return { state: 'failed', ok: false, rowCount: 0, rows: [], note: errorNote(errorItems[0]), diagnostics };\n  }\n\n  // 2. The main output.\n  let mainItems;\n  try {\n    mainItems = $(nodeName).all(0, 0);\n  } catch (e) {\n    return {\n      state: 'failed', ok: false, rowCount: 0, rows: [], diagnostics,\n      note: ('Reference to \"' + nodeName + '\" failed: ' + String((e && e.message) || e)).slice(0, 300),\n    };\n  }\n  if (!Array.isArray(mainItems)) {\n    return {\n      state: 'failed', ok: false, rowCount: 0, rows: [], diagnostics,\n      note: ('Unexpected output shape from \"' + nodeName + '\".').slice(0, 300),\n    };\n  }\n  diagnostics.mainItemCount = mainItems.length;\n\n  // 3. Belt and braces. Should never fire once every fetch node uses continueErrorOutput --\n  //    if it does, some node type routes its error to the main output anyway.\n  const erroredMainItem = mainItems.find(i => i && i.json && typeof i.json.error !== 'undefined');\n  if (erroredMainItem) {\n    return { state: 'failed', ok: false, rowCount: 0, rows: [], note: errorNote(erroredMainItem), diagnostics };\n  }\n\n  // 4. A key-less item is alwaysOutputData padding, never a row.\n  const rows = [];\n  for (const i of mainItems) {\n    const j = i && i.json;\n    if (j && Object.keys(j).length > 0) rows.push(j);\n    else diagnostics.blankItemCount += 1;\n  }\n\n  // 5 / 6.\n  if (rows.length === 0) {\n    return {\n      state: 'empty', ok: true, rowCount: 0, rows: [], diagnostics,\n      note: 'Empty week: the source was read successfully and had no rows.',\n    };\n  }\n  return { state: 'ok', ok: true, rowCount: rows.length, rows, note: '', diagnostics };\n}\n\nconst week = $('Set - Define Reporting Week').first().json;\n\nconst hubspot  = classify('HubSpot - Fetch Deals And Pipeline');\nconst supabase = classify('Supabase - Fetch Product Usage');\nconst finance  = classify('Google Sheets - Fetch Finance Actuals');\nconst support  = classify('Google Sheets - Fetch Support Log');\nconst snapshot = classify('Google Sheets - Fetch Last Week Snapshot');\n\nconst sourceLabels = {\n  hubspot: 'HubSpot deals and pipeline',\n  supabase: 'Supabase product usage',\n  finance: 'Finance actuals',\n  support: 'Support log',\n  snapshot: 'Previous weekly snapshot',\n};\n\nconst sourceResults = { hubspot, supabase, finance, support, snapshot };\nconst sources = {};\nconst sourceDiagnostics = {};\nfor (const k of Object.keys(sourceResults)) {\n  const r = sourceResults[k];\n  sources[k] = { state: r.state, ok: r.ok, rowCount: r.rowCount, note: r.note };\n  sourceDiagnostics[k] = r.diagnostics;\n}\n\nconst missingSources = Object.keys(sources).filter(k => sources[k].state === 'failed').map(k => sourceLabels[k]);\nconst emptySources = Object.keys(sources).filter(k => sources[k].state === 'empty').map(k => sourceLabels[k]);\nconst dataComplete = missingSources.length === 0;\nconst dataWarning = dataComplete ? '' :\n  'Data warning: ' + missingSources.join(', ') + ' could not be read this week. ' +\n  'Figures from ' + (missingSources.length > 1 ? 'these sources are' : 'that source is') + ' missing, not zero.';\n\nlet alreadyAppended = false;\nif (snapshot.state === 'ok' || snapshot.state === 'empty') {\n  alreadyAppended = snapshot.rows.some(r => String(r.week_label || '').trim() === week.weekLabel);\n}\n\nconst lastWeekLabel = previousWeekLabel(week.weekLabel);\nconst thisWeekFinanceRows = finance.state === 'ok' ? finance.rows.filter(r => String(r.week_label || '').trim() === week.weekLabel) : [];\nconst lastWeekFinanceRows = (finance.state === 'ok' && lastWeekLabel) ? finance.rows.filter(r => String(r.week_label || '').trim() === lastWeekLabel) : [];\n\nconst metrics = thisWeekFinanceRows.map(row => {\n  const key = String(row.metric || '').trim();\n  const value = toNum(row.actual);\n  const target = toNum(row.target);\n  const lastRow = lastWeekFinanceRows.find(r => String(r.metric || '').trim() === key);\n  const lastWeekValue = lastRow ? toNum(lastRow.actual) : null;\n\n  const variance = (value !== null && target !== null) ? value - target : null;\n  const variancePct = (variance !== null && target) ? (variance / target) * 100 : null;\n  const wow = (value !== null && lastWeekValue !== null) ? value - lastWeekValue : null;\n  const wowPct = (wow !== null && lastWeekValue) ? (wow / lastWeekValue) * 100 : null;\n\n  return {\n    key, label: key, unit: '',\n    value, target, variance, variancePct,\n    lastWeek: lastWeekValue, wow, wowPct,\n    sourceName: 'Finance actuals',\n    available: finance.state === 'ok' && value !== null,\n  };\n});\n\nconst dealRows = hubspot.state === 'ok' ? hubspot.rows : [];\nconst stageTotals = {};\nlet opened = 0, closedWon = 0, closedLost = 0;\nfor (const d of dealRows) {\n  const stage = String(d.dealstage || 'unknown');\n  const amount = toNum(d.amount) || 0;\n  stageTotals[stage] = (stageTotals[stage] || 0) + amount;\n  const s = stage.toLowerCase();\n  if (s.indexOf('closedwon') !== -1 || s.indexOf('closed_won') !== -1) closedWon += 1;\n  else if (s.indexOf('closedlost') !== -1 || s.indexOf('closed_lost') !== -1) closedLost += 1;\n  else opened += 1;\n}\nconst pipeline = {\n  byStage: Object.keys(stageTotals).map(stage => ({ stage, value: stageTotals[stage] })),\n  movement: { opened, closedWon, closedLost, net: closedWon - closedLost },\n};\n\nconst revenueTrend = [];\nif (snapshot.state === 'ok') {\n  for (const r of snapshot.rows) {\n    revenueTrend.push({\n      weekLabel: String(r.week_label || ''),\n      revenue: null,\n      synthetic: String(r.synthetic || '').toUpperCase() === 'TRUE',\n    });\n  }\n}\nconst revenueMetric = metrics.find(m => /revenue/i.test(m.key));\nif (revenueMetric) {\n  revenueTrend.push({ weekLabel: week.weekLabel, revenue: revenueMetric.value, synthetic: false });\n}\n\nlet readyToBuild = true;\nlet blockReason = '';\nif (alreadyAppended) {\n  readyToBuild = false;\n  blockReason = 'A snapshot row for ' + week.weekLabel + ' already exists. Run blocked to avoid a duplicate.';\n} else if (missingSources.length === Object.keys(sources).length) {\n  readyToBuild = false;\n  blockReason = 'All five sources failed. Nothing to report.';\n} else if (metrics.length === 0) {\n  readyToBuild = false;\n  blockReason = 'No metrics were computed: Finance Actuals had no rows for ' + week.weekLabel + '.';\n}\n\nreturn [{\n  json: {\n    week: { weekStart: week.weekStart, weekEnd: week.weekEnd, weekLabel: week.weekLabel, runId: week.runId, timezone: week.timezone },\n    sources, missingSources, emptySources, dataComplete, dataWarning, alreadyAppended, readyToBuild, blockReason,\n    metrics, pipeline, revenueTrend, sourceDiagnostics,\n  },\n}];"
+      }
+    },
+    {
+      "id": "n10",
+      "name": "IF - Enough Data To Build Brief?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1152, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "combinator": "and",
+          "conditions": [ { "id": "c1", "leftValue": "={{ $('Code - Normalise And Calculate Metrics').item.json.readyToBuild === true }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } } ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n11",
+      "name": "OpenAI - Write Executive Narrative",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [1344, -224],
+      "parameters": {
+        "modelId": { "__rl": true, "mode": "list", "value": "gpt-5-mini", "cachedResultName": "GPT-5-MINI" },
+        "responses": {
+          "values": [
+            { "role": "system", "content": "You are writing a short executive narrative for a weekly leadership brief. You will receive one JSON object with computed metrics, pipeline data, revenue trend, a list of missing data sources (missingSources) and a list of empty data sources (emptySources). Rules: (1) Only describe what the numbers in the JSON show. Never invent a cause, a number, or a trend that is not directly computable from the JSON. (2) If missingSources is not empty, say nothing about those areas at all -- do not mention, estimate or infer anything about them, and write as if they do not exist in your narrative. (3) If emptySources is not empty, those areas were read successfully and had nothing in them this week -- you may name them as a real, verified zero, for example \"no tickets were logged this week\", and you must never describe an empty source as unavailable, missing, or unknown. (4) Cover, in plain business English and under 250 words: major changes, wins, risks, exceptions, and any metric that needs attention (a large variance against target or a large week-over-week change). (5) Do not use markdown headers or bullet formatting -- write plain prose paragraphs suitable for pasting into a document. (6) If dataComplete is false, open with one sentence acknowledging that this week's brief is based on partial data, without naming any number for the missing area.", "type": "text" },
+            { "content": "={{ JSON.stringify($('Code - Normalise And Calculate Metrics').item.json, (k, v) => k === 'sourceDiagnostics' ? undefined : v) }}", "type": "text", "role": "user" }
+          ]
+        },
+        "builtInTools": {},
+        "options": {},
+        "resource": "text",
+        "operation": "response",
+        "simplify": true
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 10000,
+      "credentials": { "openAiApi": { "id": "DBmj9DTgWeT0tOGw", "name": "OpenAI account" } },
+      "disabled": true,
+      "onError": "continueRegularOutput",
+      "notes": "Built DISABLED per money-facts.md -- must stay disabled until QA passes and Leo/Tester explicitly enable it. Model gpt-5-mini chosen live from this credential's real model list on 2026-09-13 (cheapest confirmed-priced model at $0.25 / $2 per 1M tokens per Integrator report). Confirm this is still the right model before enabling. maxTries capped at 2 -- every retry here is a real charge. RULING v1 (2026-09-14): system prompt's rule (3) added -- emptySources may be named as a real verified zero, missingSources stays fully unmentioned. Still disabled, not touched otherwise. QA v3 NEW-8 (2026-09-14): the user-message payload now strips sourceDiagnostics via a JSON.stringify replacer, so the diagnostics block node 9 added for the Tester is never sent to the model. System prompt untouched by this fix."
+    },
+    {
+      "id": "n12",
+      "name": "Code - Build Brief HTML And Chart URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1632, -96],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Builds the whole brief as one HTML string (Route A, architecture v1 section 8):\n// Drive converts this HTML to a Google Doc, and its remote QuickChart <img> URLs are\n// expected to be fetched during that conversion. That fetch-on-convert behaviour is\n// UNVERIFIED (Integrator report, priority item 3) -- see node 13's notes.\n\nconst metricsData = $('Code - Normalise And Calculate Metrics').first().json;\n\nfunction escapeHtml(s) {\n  return String(s == null ? '' : s)\n    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nfunction fmt(n) {\n  if (n === null || n === undefined || !Number.isFinite(n)) return '—';\n  return Number(n).toLocaleString('en-GB', { maximumFractionDigits: 2 });\n}\n\nfunction fmtPct(n) {\n  if (n === null || n === undefined || !Number.isFinite(n)) return '—';\n  return (n >= 0 ? '+' : '') + Number(n).toFixed(1) + '%';\n}\n\n// Narrative: several plausible OpenAI simplified-output shapes are tried, since the\n// exact field was not independently confirmed, and the node is built disabled per\n// money-facts.md until Leo reviews and turns it on.\nlet narrative = '';\ntry {\n  const ai = $('OpenAI - Write Executive Narrative').first().json;\n  narrative = ai && (ai.content || ai.text || ai.output_text || (ai.message && ai.message.content) || '');\n} catch (e) {\n  narrative = '';\n}\nif (!narrative || typeof narrative !== 'string' || !narrative.trim()) {\n  narrative = 'Narrative unavailable this week: the automated summary could not be generated or read for this run.';\n}\n\nconst dataWarningHtml = metricsData.dataWarning\n  ? '<p style=\"background:#fff3cd;border:1px solid #ffe69c;padding:10px;font-weight:bold;\">' + escapeHtml(metricsData.dataWarning) + '</p>'\n  : '';\n\nconst emptySourcesHtml = (metricsData.emptySources && metricsData.emptySources.length)\n  ? '<p>' + metricsData.emptySources.map(s => escapeHtml(s + ': no data this week.')).join('<br/>') + '</p>'\n  : '';\n\nconst metricRows = (metricsData.metrics || []).map(m => {\n  const valueCell = m.available ? fmt(m.value) : '<span title=\"' + escapeHtml(metricsData.dataWarning) + '\">—</span>';\n  return '<tr>' +\n    '<td>' + escapeHtml(m.label) + '</td>' +\n    '<td>' + valueCell + '</td>' +\n    '<td>' + fmt(m.target) + '</td>' +\n    '<td>' + fmtPct(m.variancePct) + '</td>' +\n    '<td>' + fmtPct(m.wowPct) + '</td>' +\n    '</tr>';\n}).join('\\n');\n\nconst kpiTableHtml = (metricsData.metrics && metricsData.metrics.length)\n  ? '<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><thead><tr>' +\n    '<th>Metric</th><th>Actual</th><th>Target</th><th>Variance vs target</th><th>Week over week</th>' +\n    '</tr></thead><tbody>' + metricRows + '</tbody></table>'\n  : '<p>No metrics were available this week.</p>';\n\nconst byStage = metricsData.pipeline && metricsData.pipeline.byStage ? metricsData.pipeline.byStage : [];\nlet pipelineChartHtml = '<p>No pipeline data available this week.</p>';\nif (byStage.length) {\n  const pipelineConfig = {\n    type: 'bar',\n    data: { labels: byStage.map(s => s.stage), datasets: [{ label: 'Pipeline value', data: byStage.map(s => s.value) }] },\n    options: { plugins: { title: { display: true, text: 'Pipeline by stage' } } },\n  };\n  const pipelineUrl = 'https://quickchart.io/chart?width=600&height=350&c=' + encodeURIComponent(JSON.stringify(pipelineConfig));\n  pipelineChartHtml = '<img src=\"' + pipelineUrl + '\" alt=\"Pipeline by stage\" width=\"600\" height=\"350\" />';\n}\n\nconst trendPoints = (metricsData.revenueTrend || []).filter(p => Number.isFinite(p.revenue));\nlet revenueChartHtml = '<p>Not enough revenue history yet to draw a trend.</p>';\nif (trendPoints.length >= 2) {\n  const revenueConfig = {\n    type: 'line',\n    data: { labels: trendPoints.map(p => p.weekLabel + (p.synthetic ? ' (seeded)' : '')), datasets: [{ label: 'Revenue', data: trendPoints.map(p => p.revenue), fill: false }] },\n    options: { plugins: { title: { display: true, text: 'Revenue trend' } } },\n  };\n  const revenueUrl = 'https://quickchart.io/chart?width=600&height=350&c=' + encodeURIComponent(JSON.stringify(revenueConfig));\n  revenueChartHtml = '<img src=\"' + revenueUrl + '\" alt=\"Revenue trend\" width=\"600\" height=\"350\" />';\n}\n\nconst risks = (metricsData.metrics || [])\n  .filter(m => m.available && Number.isFinite(m.variancePct) && Math.abs(m.variancePct) >= 10)\n  .map(m => '<li>' + escapeHtml(m.label) + ': ' + fmtPct(m.variancePct) + ' vs target</li>')\n  .join('\\n');\nconst risksHtml = risks ? '<ul>' + risks + '</ul>' : '<p>No metric is more than 10% off target this week.</p>';\n\nconst docTitle = 'Executive Brief - ' + metricsData.week.weekLabel;\n\nconst html =\n  '<html><body style=\"font-family:Arial,sans-serif;\">' +\n  '<h1>' + escapeHtml(docTitle) + '</h1>' +\n  dataWarningHtml +\n  emptySourcesHtml +\n  '<h2>Executive summary</h2><p>' + escapeHtml(narrative).replace(/\\n/g, '<br/>') + '</p>' +\n  '<h2>KPI table</h2>' + kpiTableHtml +\n  '<h2>Pipeline</h2>' + pipelineChartHtml +\n  '<h2>Revenue trend</h2>' + revenueChartHtml +\n  '<h2>Risks and observations</h2>' + risksHtml +\n  '</body></html>';\n\nlet summary = (metricsData.dataWarning ? metricsData.dataWarning + '\\n\\n' : '') +\n  'Executive Brief - ' + metricsData.week.weekLabel + '\\n' + narrative;\nif (summary.length > 3500) summary = summary.slice(0, 3497) + '...';\n\nreturn [{\n  json: {\n    docTitle,\n    html,\n    telegramSummary: summary,\n    weekLabel: metricsData.week.weekLabel,\n    dataWarning: metricsData.dataWarning,\n    dataComplete: metricsData.dataComplete,\n  },\n}];"
+      }
+    },
+    {
+      "id": "n13",
+      "name": "HTTP Request - Create Google Doc From HTML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [1808, -96],
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "multipart/related; boundary=execrollupboundary",
+        "body": "={{ \"--execrollupboundary\\r\\nContent-Type: application/json; charset=UTF-8\\r\\n\\r\\n\" + JSON.stringify({name: $('Code - Build Brief HTML And Chart URLs').item.json.docTitle, mimeType: \"application/vnd.google-apps.document\"}) + \"\\r\\n--execrollupboundary\\r\\nContent-Type: text/html; charset=UTF-8\\r\\n\\r\\n\" + $('Code - Build Brief HTML And Chart URLs').item.json.html + \"\\r\\n--execrollupboundary--\" }}",
+        "options": { "response": { "response": { "responseFormat": "json" } }, "timeout": 60000 }
+      },
+      "retryOnFail": false,
+      "maxTries": 1,
+      "credentials": { "googleDriveOAuth2Api": { "id": "iH3ximBTa6XjheVQ", "name": "Google Drive account" } },
+      "notes": "Route A from architecture v1 section 8. Riskiest unverified assumption in the whole design (Integrator priority item 3): whether Drive's HTML-to-Doc conversion fetches remote <img src> URLs (the QuickChart charts) during conversion. Must be proven with a real throwaway run before being trusted -- if it does not embed images, Route B (three different nodes) replaces this node and node 14. No Drive folder parent is set, so the Doc lands in the credential's My Drive root -- the 'Executive Reporting Rollup' Drive folder referenced in data-sources.md was created under a different, unverified Google account and is not assumed reachable.",
+      "onError": "stopWorkflow"
+    },
+    {
+      "id": "n14",
+      "name": "Google Drive - Export Brief As PDF",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [2032, -96],
+      "parameters": {
+        "operation": "download",
+        "fileId": { "__rl": true, "mode": "id", "value": "={{ $('HTTP Request - Create Google Doc From HTML').item.json.id }}", "cachedResultName": "Google Doc created by node 13 (dynamic id)" },
+        "options": { "binaryPropertyName": "data", "googleFileConversion": { "conversion": { "docsToFormat": "application/pdf" } } },
+        "resource": "file"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": { "googleDriveOAuth2Api": { "id": "iH3ximBTa6XjheVQ", "name": "Google Drive account" } },
+      "onError": "stopWorkflow"
+    },
+    {
+      "id": "n15",
+      "name": "Telegram - Request Brief Approval",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2240, -96],
+      "parameters": {
+        "operation": "sendAndWait",
+        "chatId": "SET_ME_telegram_chat_id",
+        "message": "={{ ($('Code - Build Brief HTML And Chart URLs').item.json.dataWarning ? $('Code - Build Brief HTML And Chart URLs').item.json.dataWarning + '\\n\\n' : '') + 'Executive Brief - ' + $('Code - Build Brief HTML And Chart URLs').item.json.weekLabel + '\\n\\nReview the full brief here:\\nhttps://docs.google.com/document/d/' + $('HTTP Request - Create Google Doc From HTML').item.json.id + '/edit' }}",
+        "approvalOptions": { "values": { "approvalType": "double", "approveLabel": "✅ Approve", "disapproveLabel": "❌ Decline" } },
+        "chatApproval": true,
+        "options": { "limitWaitTime": { "values": { "resumeAmount": 6, "limitType": "afterTimeInterval", "resumeUnit": "hours" } }, "appendAttribution": false },
+        "resource": "message",
+        "responseType": "approval",
+        "postDecisionBehavior": "showOutcome"
+      },
+      "retryOnFail": false,
+      "maxTries": 1,
+      "webhookId": "9756457e-00a8-43b0-be16-b4ae01ede2ba",
+      "credentials": { "telegramApi": { "id": "xkNXmRcwoz0Htiqy", "name": "Executive Rollup Bot Telegram account" } },
+      "notes": "PRD §12 item 13: Leo is the approver (settled). PRD §12 item 8 (Telegram chat) is now closed: chatId is SET_ME_telegram_chat_id, Leo's own Telegram user id, given by Leo on 2026-09-14, and the credential is Executive Rollup Bot Telegram account (xkNXmRcwoz0Htiqy). retryOnFail is deliberately off: a retry would send a second approval request for the same brief, which is a correctness bug not a reliability improvement."
+    },
+    {
+      "id": "n16",
+      "name": "IF - Was The Brief Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [2464, -96],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "combinator": "and",
+          "conditions": [ { "id": "c1", "leftValue": "={{ ($('Telegram - Request Brief Approval').item.json.data?.approved ?? $('Telegram - Request Brief Approval').item.json.approved) === true }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } } ]
+        },
+        "options": {}
+      },
+      "notes": "Defensive null-check: the leftValue expression uses a strict === true comparison, so approved being false, null, or completely absent (the unverified timeout case, Integrator report item 6) all evaluate to false and route the same way, to the not-sent branch. Nothing here assumes the approved key exists on the item."
+    },
+    {
+      "id": "n17",
+      "name": "Gmail - Send Brief To Leadership",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [2688, -224],
+      "parameters": {
+        "sendTo": "SET_ME_leadership_email_list",
+        "subject": "={{ 'Executive Brief - ' + $('Code - Build Brief HTML And Chart URLs').item.json.weekLabel }}",
+        "message": "={{ ($('Code - Build Brief HTML And Chart URLs').item.json.dataWarning ? '<p><strong>' + $('Code - Build Brief HTML And Chart URLs').item.json.dataWarning + '</strong></p>' : '') + '<p>Please find the executive brief for this week attached as a PDF.</p>' }}",
+        "options": { "appendAttribution": false, "attachmentsUi": { "attachmentsBinary": [{ "property": "data" }] } },
+        "resource": "message",
+        "operation": "send",
+        "emailType": "html"
+      },
+      "retryOnFail": false,
+      "maxTries": 1,
+      "webhookId": "581d8213-7ad9-4daa-a10a-63c0faf610ef",
+      "credentials": { "gmailOAuth2": { "id": "cFvvHW2uwDptkQvf", "name": "Gmail account" } },
+      "notes": "PRD §12 item 7 (email recipients) is OPEN. sendTo is a SET_ME placeholder. Relies on the PDF binary field 'data' from node 14 surviving unchanged through node 15 (Telegram sendAndWait) and node 16 (IF) -- this passthrough is not verified by the Integrator and should be checked live before this node is trusted (see coder report).",
+      "onError": "stopWorkflow"
+    },
+    {
+      "id": "n18",
+      "name": "Telegram - Post Brief Summary",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2912, -224],
+      "parameters": {
+        "chatId": "SET_ME_telegram_chat_id",
+        "text": "={{ $('Code - Build Brief HTML And Chart URLs').item.json.telegramSummary }}",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "webhookId": "85b969ba-baaf-45bc-bb0d-46ee148b06b0",
+      "credentials": { "telegramApi": { "id": "xkNXmRcwoz0Htiqy", "name": "Executive Rollup Bot Telegram account" } },
+      "onError": "continueRegularOutput",
+      "notes": "PRD §12 item 8 (Telegram chat) is now closed. chatId is SET_ME_telegram_chat_id, the same real chat id as node 15 -- same chat. onError continues: by the time this runs the PDF has already reached leadership, so a Telegram hiccup must not stop the snapshot row being written."
+    },
+    {
+      "id": "n19",
+      "name": "IF - All Sources OK For Snapshot?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [3120, -224],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "combinator": "and",
+          "conditions": [ { "id": "c1", "leftValue": "={{ $('Code - Normalise And Calculate Metrics').item.json.dataComplete === true }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } } ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n20",
+      "name": "Google Sheets - Append Weekly Snapshot Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [3344, -320],
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "list", "value": "1TdTEZ1Jh-4Ne62LmwFfza25pYSttembIuji1o--VElA", "cachedResultName": "Exec Rollup - Weekly Snapshot", "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TdTEZ1Jh-4Ne62LmwFfza25pYSttembIuji1o--VElA/edit?usp=drivesdk" },
+        "sheetName": { "__rl": true, "mode": "list", "value": 1425370562, "cachedResultName": "Untitled", "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TdTEZ1Jh-4Ne62LmwFfza25pYSttembIuji1o--VElA/edit#gid=1425370562" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "week_label": "={{ $('Code - Normalise And Calculate Metrics').item.json.week.weekLabel }}",
+            "week_start": "={{ $('Code - Normalise And Calculate Metrics').item.json.week.weekStart }}",
+            "week_end": "={{ $('Code - Normalise And Calculate Metrics').item.json.week.weekEnd }}",
+            "run_at": "={{ $('Set - Define Reporting Week').item.json.triggeredAt }}",
+            "synthetic": false,
+            "notes": "={{ $('Code - Normalise And Calculate Metrics').item.json.dataWarning || '' }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "retryOnFail": false,
+      "maxTries": 1,
+      "credentials": { "googleSheetsOAuth2Api": { "id": "iFXqcyvwh4DYkt3s", "name": "Google Sheets account" } },
+      "notes": "The workflow's only write (PRD §7, CLAUDE.md). Column order matches data-sources.md exactly: week_label, week_start, week_end, run_at, synthetic, notes. synthetic is hardcoded false because this node only ever appends a REAL run's row -- seeded synthetic history is a separate, one-off task, never produced by this node.",
+      "onError": "stopWorkflow"
+    },
+    {
+      "id": "n21",
+      "name": "Telegram - Alert Brief Not Sent",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2688, 48],
+      "parameters": {
+        "chatId": "SET_ME_telegram_chat_id",
+        "text": "={{ (function(){ var approved = ($('Telegram - Request Brief Approval').item.json.data?.approved ?? $('Telegram - Request Brief Approval').item.json.approved); var reason = (approved === false) ? 'The brief was declined.' : 'Nobody responded within the 6-hour approval window.'; var week = $('Code - Normalise And Calculate Metrics').item.json.week.weekLabel; var docId = $('HTTP Request - Create Google Doc From HTML').item.json.id; return 'Brief for ' + week + ' was NOT sent to leadership.\\n' + reason + '\\nNo snapshot row was written.\\n\\nReview: https://docs.google.com/document/d/' + docId + '/edit'; })() }}",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "webhookId": "35230da3-cf3a-4f97-af92-bd7e811a4ba8",
+      "credentials": { "telegramApi": { "id": "xkNXmRcwoz0Htiqy", "name": "Executive Rollup Bot Telegram account" } },
+      "onError": "continueRegularOutput",
+      "notes": "Fires on rejection or approval timeout (architecture v1 section 15). Tells the two apart by checking whether approved is exactly false (declined) versus anything else including absent (timed out) -- simpler than, and just as safe as, the timestamp comparison the architecture describes, since the ACTIONS taken (no email, no summary, no row) are identical either way; only the wording differs."
+    },
+    {
+      "id": "n22",
+      "name": "Telegram - Alert Run Blocked",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1360, 224],
+      "parameters": {
+        "chatId": "SET_ME_telegram_chat_id",
+        "text": "={{ 'Run blocked for ' + $('Code - Normalise And Calculate Metrics').item.json.week.weekLabel + ':\\n' + $('Code - Normalise And Calculate Metrics').item.json.blockReason }}",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "webhookId": "bd2125e2-84f0-4efa-b977-49f21ab0e4e5",
+      "credentials": { "telegramApi": { "id": "xkNXmRcwoz0Htiqy", "name": "Executive Rollup Bot Telegram account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n23",
+      "name": "NoOp - End Run Without Snapshot",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [3344, -96],
+      "parameters": {}
+    },
+    {
+      "id": "n24",
+      "name": "Error Trigger - Catch Unhandled Failure",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [1744, 224],
+      "parameters": {}
+    },
+    {
+      "id": "n25",
+      "name": "Telegram - Alert Workflow Failed",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3360, 224],
+      "parameters": {
+        "chatId": "SET_ME_telegram_chat_id",
+        "text": "={{ (function(){ try { var d = $json || {}; var wfName = (d.workflow && d.workflow.name) || 'Executive Reporting Rollup - Weekly Leadership Brief'; var nodeName = (d.execution && d.execution.lastNodeExecuted) || 'unknown node'; var errMsg = (d.execution && d.execution.error && d.execution.error.message) || 'See the execution log for details.'; return 'ALERT: ' + wfName + ' failed.\\nNode: ' + nodeName + '\\nError: ' + errMsg; } catch (e) { return 'ALERT: Executive Reporting Rollup failed. Could not read error detail: ' + e.message; } })() }}",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "webhookId": "3359f48e-4dbd-44a7-97ad-b42855296222",
+      "credentials": { "telegramApi": { "id": "xkNXmRcwoz0Htiqy", "name": "Executive Rollup Bot Telegram account" } },
+      "onError": "continueRegularOutput",
+      "notes": "Error Trigger's exact output shape (workflow.name / execution.lastNodeExecuted / execution.error.message) could not be verified from any node schema -- get_node only describes configurable input parameters, not a trigger's runtime output shape. Written defensively with a try/catch and field fallbacks so this alert itself cannot throw."
+    }
+  ],
+  "connections": {
+    "Schedule Trigger - Weekly Monday 7am": { "main": [ [ { "node": "Set - Define Reporting Week", "type": "main", "index": 0 } ] ] },
+    "Set - Define Reporting Week": { "main": [ [
+      { "node": "HubSpot - Fetch Deals And Pipeline", "type": "main", "index": 0 },
+      { "node": "Supabase - Fetch Product Usage", "type": "main", "index": 0 },
+      { "node": "Google Sheets - Fetch Finance Actuals", "type": "main", "index": 0 },
+      { "node": "Google Sheets - Fetch Support Log", "type": "main", "index": 0 },
+      { "node": "Google Sheets - Fetch Last Week Snapshot", "type": "main", "index": 0 }
+    ] ] },
+    "HubSpot - Fetch Deals And Pipeline": { "main": [
+      [ { "node": "Merge - Wait For All Five Sources", "type": "main", "index": 0 } ],
+      [ { "node": "Merge - Wait For All Five Sources", "type": "main", "index": 0 } ]
+    ] },
+    "Supabase - Fetch Product Usage": { "main": [
+      [ { "node": "Merge - Wait For All Five Sources", "type": "main", "index": 1 } ],
+      [ { "node": "Merge - Wait For All Five Sources", "type": "main", "index": 1 } ]
+    ] },
+    "Google Sheets - Fetch Finance Actuals": { "main": [
+      [ { "node": "Merge - Wait For All Five Sources", "type": "main", "index": 2 } ],
+      [ { "node": "Merge - Wait For All Five Sources", "type": "main", "index": 2 } ]
+    ] },
+    "Google Sheets - Fetch Support Log": { "main": [
+      [ { "node": "Merge - Wait For All Five Sources", "type": "main", "index": 3 } ],
+      [ { "node": "Merge - Wait For All Five Sources", "type": "main", "index": 3 } ]
+    ] },
+    "Google Sheets - Fetch Last Week Snapshot": { "main": [
+      [ { "node": "Merge - Wait For All Five Sources", "type": "main", "index": 4 } ],
+      [ { "node": "Merge - Wait For All Five Sources", "type": "main", "index": 4 } ]
+    ] },
+    "Merge - Wait For All Five Sources": { "main": [ [ { "node": "Code - Normalise And Calculate Metrics", "type": "main", "index": 0 } ] ] },
+    "Code - Normalise And Calculate Metrics": { "main": [ [ { "node": "IF - Enough Data To Build Brief?", "type": "main", "index": 0 } ] ] },
+    "IF - Enough Data To Build Brief?": { "main": [
+      [ { "node": "OpenAI - Write Executive Narrative", "type": "main", "index": 0 } ],
+      [ { "node": "Telegram - Alert Run Blocked", "type": "main", "index": 0 } ]
+    ] },
+    "OpenAI - Write Executive Narrative": { "main": [ [ { "node": "Code - Build Brief HTML And Chart URLs", "type": "main", "index": 0 } ] ] },
+    "Code - Build Brief HTML And Chart URLs": { "main": [ [ { "node": "HTTP Request - Create Google Doc From HTML", "type": "main", "index": 0 } ] ] },
+    "HTTP Request - Create Google Doc From HTML": { "main": [ [ { "node": "Google Drive - Export Brief As PDF", "type": "main", "index": 0 } ] ] },
+    "Google Drive - Export Brief As PDF": { "main": [ [ { "node": "Telegram - Request Brief Approval", "type": "main", "index": 0 } ] ] },
+    "Telegram - Request Brief Approval": { "main": [ [ { "node": "IF - Was The Brief Approved?", "type": "main", "index": 0 } ] ] },
+    "IF - Was The Brief Approved?": { "main": [
+      [ { "node": "Gmail - Send Brief To Leadership", "type": "main", "index": 0 } ],
+      [ { "node": "Telegram - Alert Brief Not Sent", "type": "main", "index": 0 } ]
+    ] },
+    "Gmail - Send Brief To Leadership": { "main": [ [ { "node": "Telegram - Post Brief Summary", "type": "main", "index": 0 } ] ] },
+    "Telegram - Post Brief Summary": { "main": [ [ { "node": "IF - All Sources OK For Snapshot?", "type": "main", "index": 0 } ] ] },
+    "IF - All Sources OK For Snapshot?": { "main": [
+      [ { "node": "Google Sheets - Append Weekly Snapshot Row", "type": "main", "index": 0 } ],
+      [ { "node": "NoOp - End Run Without Snapshot", "type": "main", "index": 0 } ]
+    ] },
+    "Error Trigger - Catch Unhandled Failure": { "main": [ [ { "node": "Telegram - Alert Workflow Failed", "type": "main", "index": 0 } ] ] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/London",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "errorWorkflow": "iIypy4KWtaqsowAQ",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  }
+}

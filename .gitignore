@@ -1,0 +1,22 @@
+# Contains the n8n API key. Never commit this file.
+.mcp.json
+
+# Other places secrets tend to land. Never commit these either.
+.env
+.env.*
+.claude/settings.local.json
+*.pem
+*.key
+
+node_modules/
+
+# Real exported briefs may contain live company numbers. Samples only, in samples/.
+briefs/
+*.pdf
+
+__pycache__/
+*.pyc
+
+# Staging copies of other projects must never be committed here.
+.weekly-competitor-brief-staging/
+*-staging/
