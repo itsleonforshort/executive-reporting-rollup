@@ -1,0 +1,8 @@
+# The workflow JSON is the actual deliverable of this repo, not incidental data.
+# GitHub's linguist classifies .json as "data" and excludes it from language stats by
+# default, which leaves this repo showing no language at all. This counts it.
+workflows/*.json linguist-detectable=true
+workflows/*.json linguist-language=JSON
+
+# Keep generated and vendored paths out of the stats if any are ever added.
+samples/* linguist-documentation=true
